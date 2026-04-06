@@ -11,6 +11,7 @@ from app.schemas.ad_account import AdAccount as AdAccountSchema, AdAccountCreate
 from app.services.meta import MetaService
 import uuid
 import os
+from .filters import DashboardFilterParams
 
 router = APIRouter()
 
@@ -91,18 +92,22 @@ async def fetch_and_delete_agency_account(
 
 @router.get("/kpis")
 async def get_agency_kpis(
+    filter_params: DashboardFilterParams = Depends(),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant)
 ):
     # Query real insights from DB
-    result = await db.execute(
-        select(
-            func.sum(AdInsight.spend).label("total_spend"),
-            func.sum(AdInsight.clicks).label("total_clicks"),
-            func.sum(AdInsight.impressions).label("total_impressions"),
-            func.sum(AdInsight.conversions).label("total_conversions")
-        ).filter(AdInsight.tenant_id == tenant.id)
-    )
+    query = select(
+        func.sum(AdInsight.spend).label("total_spend"),
+        func.sum(AdInsight.clicks).label("total_clicks"),
+        func.sum(AdInsight.impressions).label("total_impressions"),
+        func.sum(AdInsight.conversions).label("total_conversions")
+    ).outerjoin(AdAccount, AdInsight.ad_account_id == AdAccount.id)\
+     .filter(AdInsight.tenant_id == tenant.id)
+     
+    query = filter_params.apply_to_query(query, AdAccount, AdInsight)
+    
+    result = await db.execute(query)
     row = result.fetchone()
     
     if not row or not row.total_spend:
@@ -145,24 +150,35 @@ async def trigger_manual_sync(
 @router.get("/daily-data")
 async def get_daily_data(
     days: int = 7,
+    filter_params: DashboardFilterParams = Depends(),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant)
 ):
     # Aggregate real daily data
-    result = await db.execute(
-        select(
-            AdInsight.date,
-            func.sum(AdInsight.spend).label("spend"),
-            func.sum(AdInsight.conversions).label("conversions")
-        ).filter(AdInsight.tenant_id == tenant.id)
-        .group_by(AdInsight.date)
-        .order_by(AdInsight.date.desc())
-        .limit(days)
-    )
+    
+    query = select(
+        AdInsight.date,
+        func.sum(AdInsight.spend).label("spend"),
+        func.sum(AdInsight.conversions).label("conversions"),
+        func.sum(AdInsight.clicks).label("clicks"),
+        func.sum(AdInsight.impressions).label("impressions")
+    ).outerjoin(AdAccount, AdInsight.ad_account_id == AdAccount.id)\
+     .filter(AdInsight.tenant_id == tenant.id)
+     
+    query = filter_params.apply_to_query(query, AdAccount, AdInsight)
+    
+    query = query.group_by(AdInsight.date).order_by(AdInsight.date.desc()).limit(days)
+    
+    result = await db.execute(query)
     rows = result.fetchall()
     
     return {
-        "current": [{"date": r.date.strftime("%d/%m"), "totalSpend": r.spend, "totalConversions": r.conversions} for r in reversed(rows)],
+        "current": [{
+            "date": r.date.strftime("%d/%m"), 
+            "totalSpend": r.spend or 0, 
+            "totalConversions": r.conversions or 0,
+            "ctr": round((r.clicks / r.impressions * 100), 2) if r.impressions else 0
+        } for r in reversed(rows)],
         "previous": []
     }
 

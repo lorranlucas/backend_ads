@@ -7,23 +7,27 @@ from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.ad_account import AdAccount
 from app.models.ad_data import AdCampaign, AdInsight
+from .filters import DashboardFilterParams
 
 router = APIRouter()
 
 @router.get("/kpis")
 async def get_dashboard_kpis(
+    filter_params: DashboardFilterParams = Depends(),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant)
 ):
-    # Aggregate real global data
-    result = await db.execute(
-        select(
-            func.sum(AdInsight.spend).label("spend"),
-            func.sum(AdInsight.conversions).label("conversions"),
-            func.sum(AdInsight.clicks).label("clicks"),
-            func.sum(AdInsight.impressions).label("impressions")
-        ).filter(AdInsight.tenant_id == tenant.id)
-    )
+    query = select(
+        func.sum(AdInsight.spend).label("spend"),
+        func.sum(AdInsight.conversions).label("conversions"),
+        func.sum(AdInsight.clicks).label("clicks"),
+        func.sum(AdInsight.impressions).label("impressions")
+    ).outerjoin(AdAccount, AdInsight.ad_account_id == AdAccount.id)\
+     .filter(AdInsight.tenant_id == tenant.id)
+
+    query = filter_params.apply_to_query(query, AdAccount, AdInsight)
+
+    result = await db.execute(query)
     row = result.fetchone()
     
     spend = float(row.spend or 0)
@@ -57,24 +61,27 @@ async def get_dashboard_kpis(
 
 @router.get("/campaigns")
 async def get_dashboard_campaigns(
+    filter_params: DashboardFilterParams = Depends(),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant)
 ):
     # Query real campaigns and aggregate their insights
-    result = await db.execute(
-        select(
-            AdCampaign.id,
-            AdCampaign.name,
-            AdAccount.platform,
-            func.sum(AdInsight.spend).label("spend"),
-            func.sum(AdInsight.conversions).label("conversions"),
-            func.sum(AdInsight.clicks).label("clicks"),
-            func.sum(AdInsight.impressions).label("impressions")
-        ).join(AdAccount, AdCampaign.ad_account_id == AdAccount.id)
-        .outerjoin(AdInsight, AdCampaign.id == AdInsight.campaign_id)
-        .filter(AdCampaign.tenant_id == tenant.id)
-        .group_by(AdCampaign.id, AdCampaign.name, AdAccount.platform)
-    )
+    query = select(
+        AdCampaign.id,
+        AdCampaign.name,
+        AdAccount.platform,
+        func.sum(AdInsight.spend).label("spend"),
+        func.sum(AdInsight.conversions).label("conversions"),
+        func.sum(AdInsight.clicks).label("clicks"),
+        func.sum(AdInsight.impressions).label("impressions")
+    ).join(AdAccount, AdCampaign.ad_account_id == AdAccount.id) \
+     .outerjoin(AdInsight, AdCampaign.id == AdInsight.campaign_id) \
+     .filter(AdCampaign.tenant_id == tenant.id)
+    
+    query = filter_params.apply_to_query(query, AdAccount, AdInsight, AdCampaign)
+    query = query.group_by(AdCampaign.id, AdCampaign.name, AdAccount.platform)
+    
+    result = await db.execute(query)
     rows = result.fetchall()
     
     return [

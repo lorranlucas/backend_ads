@@ -1,13 +1,28 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from contextlib import asynccontextmanager
+from app.database import engine, Base
+# Import all models to ensure they are registered with Base.metadata
+from app.models.tenant import Tenant
+from app.models.user import User
+from app.models.ad_account import AdAccount
+from app.models.ad_data import AdInsight
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Create tables if they don't exist
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
 
 app = FastAPI(
     title="ADS Dashboard API",
     description="Backend API for ADS Dashboard (SaaS Multi-tenant)",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS configuration
