@@ -12,8 +12,9 @@ from app.services.meta import MetaService
 import uuid
 import os
 from .filters import DashboardFilterParams
+from app.core.logging_route import TenantLoggingRoute
 
-router = APIRouter()
+router = APIRouter(route_class=TenantLoggingRoute)
 
 async def run_sync(db: AsyncSession, ad_account: AdAccount):
     # Use the token specific to the tenant/account
@@ -244,3 +245,108 @@ async def get_meta_clients(
             "color": f"hsl({(hash(r.id) % 360)}, 70%, 50%)" # Deterministic color
         } for r in rows
     ]
+
+@router.get("/clients-overview")
+async def get_clients_overview(
+    filter_params: DashboardFilterParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant)
+):
+    """
+    Returns ALL metrics used by the general dashboard, aggregated per Ad Account (client).
+    This is the single source of truth for understanding the data behind the dashboard.
+    """
+    query = select(
+        AdAccount.id.label("account_id"),
+        AdAccount.account_name.label("account_name"),
+        AdAccount.platform.label("platform"),
+        AdAccount.external_account_id.label("external_id"),
+        # All metrics from the general dashboard
+        func.sum(AdInsight.spend).label("spend"),
+        func.sum(AdInsight.impressions).label("impressions"),
+        func.sum(AdInsight.reach).label("reach"),
+        func.sum(AdInsight.clicks).label("clicks"),
+        func.sum(AdInsight.link_clicks).label("link_clicks"),
+        func.sum(AdInsight.conversions).label("conversions"),
+        func.sum(AdInsight.messages).label("messages"),
+        func.sum(AdInsight.purchases).label("purchases"),
+        func.sum(AdInsight.leads).label("leads"),
+        func.sum(AdInsight.checkouts_initiated).label("checkouts_initiated"),
+        func.sum(AdInsight.revenue).label("revenue"),
+        func.avg(AdInsight.frequency).label("frequency"),
+        func.min(AdInsight.date).label("first_date"),
+        func.max(AdInsight.date).label("last_date"),
+        func.count(AdInsight.id).label("data_points"),
+    ).outerjoin(AdInsight, AdAccount.id == AdInsight.ad_account_id) \
+     .filter(AdAccount.tenant_id == tenant.id) \
+     .group_by(AdAccount.id, AdAccount.account_name, AdAccount.platform, AdAccount.external_account_id)
+
+    query = filter_params.apply_to_query(query, AdAccount, AdInsight)
+
+    result = await db.execute(query)
+    rows = result.fetchall()
+
+    clients = []
+    for r in rows:
+        spend = float(r.spend or 0)
+        revenue = float(r.revenue or 0)
+        impressions = int(r.impressions or 0)
+        link_clicks = int(r.link_clicks or 0)
+        clicks = int(r.clicks or 0)
+        conversions = int(r.conversions or 0)
+        messages = int(r.messages or 0)
+        purchases = int(r.purchases or 0)
+        leads = int(r.leads or 0)
+        checkouts = int(r.checkouts_initiated or 0)
+        reach = int(r.reach or 0)
+        frequency = float(r.frequency or 1.0)
+
+        # All KPIs used by the dashboard
+        roas = revenue / spend if spend > 0 else 0
+        roi = ((revenue - spend) / spend * 100) if spend > 0 else 0
+        ctr = (link_clicks / impressions * 100) if impressions > 0 else 0
+        cpc = spend / link_clicks if link_clicks > 0 else 0
+        cpm = (spend / impressions * 1000) if impressions > 0 else 0
+        cpa = spend / conversions if conversions > 0 else 0
+        conversion_rate = (conversions / link_clicks * 100) if link_clicks > 0 else 0
+        cost_per_lead = spend / leads if leads > 0 else 0
+        cost_per_message = spend / messages if messages > 0 else 0
+
+        clients.append({
+            # Identity
+            "account_id": r.account_id,
+            "account_name": r.account_name or "Conta sem nome",
+            "platform": r.platform,
+            "external_id": r.external_id,
+            # Data coverage
+            "period_start": r.first_date.strftime("%d/%m/%Y") if r.first_date else None,
+            "period_end": r.last_date.strftime("%d/%m/%Y") if r.last_date else None,
+            "synced_days": int(r.data_points or 0),
+            # Volume metrics
+            "spend": round(spend, 2),
+            "impressions": impressions,
+            "reach": reach,
+            "frequency": round(frequency, 2),
+            "clicks": clicks,
+            "link_clicks": link_clicks,
+            # Conversion metrics
+            "conversions": conversions,
+            "messages": messages,
+            "purchases": purchases,
+            "leads": leads,
+            "checkouts_initiated": checkouts,
+            # Revenue
+            "revenue": round(revenue, 2),
+            # KPIs (same formulas used in the dashboard)
+            "roas": round(roas, 2),
+            "roi": round(roi, 2),
+            "ctr": round(ctr, 2),
+            "cpc": round(cpc, 2),
+            "cpm": round(cpm, 2),
+            "cpa": round(cpa, 2),
+            "conversion_rate": round(conversion_rate, 2),
+            "cost_per_lead": round(cost_per_lead, 2),
+            "cost_per_message": round(cost_per_message, 2),
+        })
+
+    return clients

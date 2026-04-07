@@ -12,7 +12,12 @@ class DashboardFilterParams:
         client_ids: Optional[str] = Query(None),
         campaign_ids: Optional[str] = Query(None)
     ):
-        self.period = period
+        # Resilience: if start_date is provided, the intent is almost always 'custom'
+        if start_date and period != "custom":
+            self.period = "custom"
+        else:
+            self.period = period
+            
         self.start_date_str = start_date
         self.end_date_str = end_date
         self.platform = platform

@@ -1,5 +1,5 @@
 from typing import AsyncGenerator, Optional
-from fastapi import Depends, HTTPException, status, Header
+from fastapi import Depends, HTTPException, status, Header, Request
 from jose import jwt, JWTError
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +52,7 @@ async def get_current_user(
     return user
 
 async def get_current_tenant(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> Tenant:
@@ -60,4 +61,8 @@ async def get_current_tenant(
     tenant = result.scalars().first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+        
+    # Store tenant in request state for logging
+    request.state.tenant_id = str(tenant.id)
+    
     return tenant

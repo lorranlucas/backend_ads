@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.models.user import User
+from app.core.logging_route import TenantLoggingRoute
 
-router = APIRouter()
+router = APIRouter(route_class=TenantLoggingRoute)
 
 @router.get("/")
 async def get_creatives(

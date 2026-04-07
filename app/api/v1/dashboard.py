@@ -8,8 +8,9 @@ from app.models.tenant import Tenant
 from app.models.ad_account import AdAccount
 from app.models.ad_data import AdCampaign, AdInsight
 from .filters import DashboardFilterParams
+from app.core.logging_route import TenantLoggingRoute
 
-router = APIRouter()
+router = APIRouter(route_class=TenantLoggingRoute)
 
 @router.get("/kpis")
 async def get_dashboard_kpis(
@@ -21,7 +22,14 @@ async def get_dashboard_kpis(
         func.sum(AdInsight.spend).label("spend"),
         func.sum(AdInsight.conversions).label("conversions"),
         func.sum(AdInsight.clicks).label("clicks"),
-        func.sum(AdInsight.impressions).label("impressions")
+        func.sum(AdInsight.link_clicks).label("link_clicks"),
+        func.sum(AdInsight.messages).label("messages"),
+        func.sum(AdInsight.purchases).label("purchases"),
+        func.sum(AdInsight.leads).label("leads"),
+        func.sum(AdInsight.impressions).label("impressions"),
+        func.sum(AdInsight.reach).label("reach"),
+        func.sum(AdInsight.revenue).label("revenue"),
+        func.avg(AdInsight.frequency).label("frequency")
     ).outerjoin(AdAccount, AdInsight.ad_account_id == AdAccount.id)\
      .filter(AdInsight.tenant_id == tenant.id)
 
@@ -32,13 +40,20 @@ async def get_dashboard_kpis(
     
     spend = float(row.spend or 0)
     conversions = int(row.conversions or 0)
-    clicks = int(row.clicks or 0)
+    total_clicks = int(row.clicks or 0)
+    link_clicks = int(row.link_clicks or 0)
+    messages = int(row.messages or 0)
+    purchases = int(row.purchases or 0)
+    leads = int(row.leads or 0)
     impressions = int(row.impressions or 0)
+    reach = int(row.reach or 0)
+    revenue = float(row.revenue or 0)
+    avg_frequency = float(row.frequency or 1.0)
     
-    revenue = spend * 4.0 # Mocking revenue multiplier for now if not in API
-    roas = 4.0 if spend > 0 else 0
-    ctr = (clicks / impressions * 100) if impressions > 0 else 0
-    cpc = (spend / clicks) if clicks > 0 else 0
+    roas = (revenue / spend) if spend > 0 else 0
+    roi = ((revenue - spend) / spend * 100) if spend > 0 else 0
+    ctr = (link_clicks / impressions * 100) if impressions > 0 else 0
+    cpc = (spend / link_clicks) if link_clicks > 0 else 0
     cpm = (spend / impressions * 1000) if impressions > 0 else 0
     cpa = (spend / conversions) if conversions > 0 else 0
     
@@ -46,17 +61,24 @@ async def get_dashboard_kpis(
         "totalSpend": round(spend, 2),
         "totalRevenue": round(revenue, 2),
         "roas": round(roas, 2),
+        "roi": round(roi, 2),
         "totalConversions": conversions,
+        "totalMessages": messages,
+        "totalPurchases": purchases,
+        "totalLeads": leads,
         "ctr": round(ctr, 2),
         "cpc": round(cpc, 2),
         "cpm": round(cpm, 2),
         "cpa": round(cpa, 2),
-        "leads": int(conversions * 0.4), # Mocking leads as fraction of conversions
-        "costPerLead": round(spend / (conversions * 0.4), 2) if conversions > 0 else 0,
-        "conversionRate": round((conversions / clicks * 100), 2) if clicks > 0 else 0,
-        "frequency": 1.5,
+        "leads": leads,
+        "messages": messages,
+        "costPerLead": round(spend / leads, 2) if leads > 0 else 0,
+        "conversionRate": round((conversions / link_clicks * 100), 2) if link_clicks > 0 else 0,
+        "frequency": round(avg_frequency, 2),
         "impressions": impressions,
-        "reach": int(impressions * 0.8)
+        "reach": reach,
+        "totalClicks": total_clicks,
+        "linkClicks": link_clicks
     }
 
 @router.get("/campaigns")
@@ -73,7 +95,8 @@ async def get_dashboard_campaigns(
         func.sum(AdInsight.spend).label("spend"),
         func.sum(AdInsight.conversions).label("conversions"),
         func.sum(AdInsight.clicks).label("clicks"),
-        func.sum(AdInsight.impressions).label("impressions")
+        func.sum(AdInsight.impressions).label("impressions"),
+        func.sum(AdInsight.revenue).label("revenue")
     ).join(AdAccount, AdCampaign.ad_account_id == AdAccount.id) \
      .outerjoin(AdInsight, AdCampaign.id == AdInsight.campaign_id) \
      .filter(AdCampaign.tenant_id == tenant.id)
@@ -89,10 +112,9 @@ async def get_dashboard_campaigns(
             "id": r.id,
             "name": r.name,
             "status": "Ativo",
-            "platform": r.platform.capitalize(),
             "spend": float(r.spend or 0),
-            "revenue": float(r.spend or 0) * 4.0,
-            "roas": 4.0 if r.spend else 0,
+            "revenue": float(r.revenue or 0),
+            "roas": float(r.revenue or 0) / float(r.spend or 1) if r.spend else 0,
             "conversions": int(r.conversions or 0),
             "ctr": round((r.clicks / r.impressions * 100), 2) if r.impressions else 0,
             "cpc": round((r.spend / r.clicks), 2) if r.clicks else 0

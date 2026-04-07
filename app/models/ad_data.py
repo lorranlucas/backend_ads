@@ -25,10 +25,23 @@ class AdInsight(Base, TimeStampedModel):
     spend = Column(Float, default=0.0)
     impressions = Column(Integer, default=0)
     clicks = Column(Integer, default=0)
+    link_clicks = Column(Integer, default=0)
     conversions = Column(Integer, default=0)
+    messages = Column(Integer, default=0)
+    purchases = Column(Integer, default=0)
+    leads = Column(Integer, default=0)
+    checkouts_initiated = Column(Integer, default=0)
+    reach = Column(Integer, default=0)
+    revenue = Column(Float, default=0.0)
+    frequency = Column(Float, default=1.0)
     
-    # Optional metadata
+    # Optional metadata for hierarchical view
     campaign_id = Column(String, ForeignKey("ad_campaigns.id"), nullable=True)
+    adset_id = Column(String, nullable=True)
+    adset_name = Column(String, nullable=True)
+    ad_id = Column(String, nullable=True)
+    ad_name = Column(String, nullable=True)
+    
     ad_account_id = Column(String, ForeignKey("ad_accounts.id"), nullable=False)
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False)
 
